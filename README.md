@@ -5,3 +5,8 @@ Hybrid quantum-classical solver for the 1D advection equation using finite diffe
  Problem
 Solve the advection equation:
 ∂u/∂t + C ∂u/∂x = 0
+
+using:
+- Second-order central differences in space
+- First-order implicit time discretization
+- Variational Quantum Linear Solver (VQLS) for matrix inversion
