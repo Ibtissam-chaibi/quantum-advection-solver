@@ -1,7 +1,7 @@
 import numpy as np
 
 def generate_matrix(N, r):
-    """Create circulant tridiagonal matrix for periodic BC"""
+   """Create circulant tridiagonal matrix for periodic BC"""
     A = np.eye(N)
     for i in range(N):
         A[i, (i+1) % N] = r
