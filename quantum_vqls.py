@@ -1,76 +1,58 @@
-import numpy as np
-import matplotlib.pyplot as plt
-import time
-from classical_fd import generate_matrix, initial_condition, validate_parameters
-from quantum_vqls import solve_linear_system
+import pennylane as qml
+from pennylane import numpy as np
 
-# Physics parameters
-C = 1.0       # Wave speed
-L = 1.0       # Domain length
-T_final = 0.5 # Simulation time
-
-# Discretization parameters
-N = 4         # Grid points (must be power of 2)
-dx = L / N
-dt = 0.01
-steps = int(T_final / dt)
-r = C * dt / (2 * dx)  # Stability parameter
-
-# Validate parameters
-validate_parameters(C, dx, dt)
-
-# Generate system matrix
-A = generate_matrix(N, r)
-print("System matrix A:\n", A)
-
-# Spatial grid and initial condition
-x = np.linspace(0, L, N, endpoint=False)
-u_classic = u_quantum = initial_condition(x, "gaussian")
-print("Initial condition:", u_quantum)
-
-# Time-stepping
-quantum_times, classic_times = [], []
-for step in range(steps):
-    # Classical solve (reference)
-    t0 = time.time()
-    u_classic = np.linalg.solve(A, u_classic)
-    classic_times.append(time.time() - t0)
+def ansatz(theta, wires):
+    """Hardware-efficient ansatz with trainable rotations"""
+    n_qubits = len(wires)
+    layers = len(theta) // (2 * n_qubits)
+    idx = 0
     
-    # Quantum solve
-    t0 = time.time()
-    b = u_quantum / np.linalg.norm(u_quantum)  # Normalize
-    u_quantum = solve_linear_system(A, b)
-    u_quantum *= np.linalg.norm(b)  # Rescale to physical magnitude
-    quantum_times.append(time.time() - t0)
+    for _ in range(layers):
+        # Layer 1: Single-qubit rotations
+        for i in wires:
+            qml.RY(theta[idx], wires=i)
+            idx += 1
+        
+        # Layer 2: Entanglement
+        for i in range(n_qubits-1):
+            qml.CNOT(wires=[wires[i], wires[i+1]])
+        
+        # Layer 3: Single-qubit rotations
+        for i in wires:
+            qml.RY(theta[idx], wires=i)
+            idx += 1
+        
+        # Reverse entanglement
+        for i in reversed(range(n_qubits-1)):
+            qml.CNOT(wires=[wires[i], wires[i+1]])
+
+def solve_linear_system(A, b, num_layers=2, max_iter=50):  # Reduced iterations for speed
+    """VQLS solver for Au = b"""
+    n_qubits = int(np.log2(len(b)))
+    dev = qml.device("default.qubit", wires=n_qubits)
+    num_params = 2 * n_qubits * num_layers
     
-    if step % 10 == 0:
-        error = np.linalg.norm(u_quantum - u_classic)
-        print(f"Step {step:4d}/{steps}: Error = {error:.4f}")
-
-# Plot results
-plt.figure(figsize=(10, 6))
-plt.subplot(1, 2, 1)
-plt.plot(x, u_classic, 'o-', label="Classical")
-plt.plot(x, u_quantum, 'x--', label="Quantum")
-plt.title("Final Solution")
-plt.xlabel("Position")
-plt.ylabel("u(x)")
-plt.legend()
-
-plt.subplot(1, 2, 2)
-plt.plot(classic_times, label="Classical")
-plt.plot(quantum_times, label="Quantum")
-plt.title("Compute Time per Step")
-plt.xlabel("Time Step")
-plt.ylabel("Seconds")
-plt.yscale('log')
-plt.legend()
-
-plt.tight_layout()
-plt.savefig("results/comparison.png")
-
-# Performance summary
-print("\n=== Performance Summary ===")
-print(f"Classical avg time: {np.mean(classic_times):.4f} ± {np.std(classic_times):.4f} s")
-print(f"Quantum avg time: {np.mean(quantum_times):.4f} ± {np.std(quantum_times):.4f} s")
-print(f"Final solution error: {np.linalg.norm(u_quantum - u_classic):.6f}")
+    @qml.qnode(dev)
+    def circuit(theta):
+        ansatz(theta, wires=range(n_qubits))
+        return qml.state()
+    
+    def cost(theta):
+        psi = circuit(theta)
+        A_psi = A @ psi
+        return np.linalg.norm(A_psi - b)**2
+    
+    # Initialize parameters
+    theta = np.random.uniform(0, 2*np.pi, num_params, requires_grad=True)
+    opt = qml.AdamOptimizer(0.05)
+    
+    # Optimization loop
+    for i in range(max_iter):
+        theta, loss = opt.step_and_cost(cost, theta)
+        if i % 5 == 0:  # Print less frequently
+            print(f"Iter {i:3d}: Loss = {loss:.6f}")
+    
+    # Compute solution
+    psi_opt = circuit(theta)
+    scale = np.dot(b, A @ psi_opt)
+    return np.real(psi_opt) / scale
