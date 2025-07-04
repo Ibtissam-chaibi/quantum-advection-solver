@@ -1,56 +1,90 @@
-import pennylane as qml
-from pennylane import numpy as np
+import numpy as np
+import matplotlib.pyplot as plt
+import time
+from classical_fd import generate_matrix, initial_condition, validate_parameters
+from quantum_vqls import solve_linear_system
 
-def ansatz(theta, wires):
-    """Hardware-efficient ansatz with trainable rotations"""
-    n_qubits = len(wires)
-    layers = len(theta) // (2 * n_qubits)
-    theta = theta.reshape(layers, 2 * n_qubits)
-    
-    for layer in range(layers):
-        # First set of rotations
-        for i in wires:
-            qml.RY(theta[layer, i], wires=i)
-        
-        # Entanglement layer
-        for i in range(n_qubits-1):
-            qml.CNOT(wires=[i, i+1])
-        
-        # Second set of rotations
-        for i in wires:
-            qml.RY(theta[layer, i + n_qubits], wires=i)
-        
-        # Reverse entanglement
-        for i in reversed(range(n_qubits-1)):
-            qml.CNOT(wires=[i, i+1])
+# Physics parameters
+C = 0.5       # Reduced wave speed for stability
+L = 1.0       # Domain length
+T_final = 0.1 # Reduced simulation time
 
-def solve_linear_system(A, b, num_layers=2, max_iter=100):
-    """VQLS solver for Au = b"""
-    n_qubits = int(np.log2(len(b)))
-    dev = qml.device("default.qubit", wires=n_qubits)
-    num_params = 2 * n_qubits * num_layers
+# Discretization parameters
+N = 4         # Grid points (must be power of 2)
+dx = L / N
+dt = 0.005    # Reduced time step
+steps = int(T_final / dt)
+r = C * dt / (2 * dx)  # Stability parameter
+
+print(f"Using parameters: r={r:.4f}, steps={steps}")
+
+# Validate parameters
+validate_parameters(C, dx, dt)
+
+# Generate system matrix
+A = generate_matrix(N, r)
+print("System matrix A:\n", np.round(A, 4))
+
+# Spatial grid and initial condition
+x = np.linspace(0, L, N, endpoint=False)
+u_classic = initial_condition(x, "square")  # Easier to solve
+u_quantum = u_classic.copy()
+print("Initial condition:", np.round(u_quantum, 4))
+
+# Time-stepping
+quantum_times, classic_times = [], []
+for step in range(steps):
+    print(f"\n--- Step {step+1}/{steps} ---")
     
-    @qml.qnode(dev)
-    def circuit(theta):
-        ansatz(theta, wires=range(n_qubits))
-        return qml.state()
+    # Classical solve (reference)
+    t0 = time.time()
+    u_classic = np.linalg.solve(A, u_classic)
+    classic_time = time.time() - t0
+    classic_times.append(classic_time)
+    print(f"Classical solved in {classic_time:.4f}s")
     
-    def cost(theta):
-        psi = circuit(theta)
-        A_psi = A @ psi
-        return np.linalg.norm(A_psi - b)**2
-    
-    # Initialize parameters
-    theta = np.random.uniform(0, 2*np.pi, num_params, requires_grad=True)
-    opt = qml.AdamOptimizer(0.05)
-    
-    # Optimization loop
-    for i in range(max_iter):
-        theta, loss = opt.step_and_cost(cost, theta)
-        if i % 10 == 0:
-            print(f"Iter {i:3d}: Loss = {loss:.6f}")
-    
-    # Compute solution
-    psi_opt = circuit(theta)
-    scale = np.dot(b, A @ psi_opt)
-    return np.real(psi_opt) / scale
+    # Quantum solve
+    t0 = time.time()
+    try:
+        b = u_quantum / np.linalg.norm(u_quantum)  # Normalize
+        u_quantum = solve_linear_system(A, b, num_layers=1, max_iter=30)
+        u_quantum *= np.linalg.norm(b)  # Rescale
+        quantum_time = time.time() - t0
+        quantum_times.append(quantum_time)
+        print(f"Quantum solved in {quantum_time:.4f}s")
+        
+        # Calculate error
+        error = np.linalg.norm(u_quantum - u_classic)
+        print(f"Error: {error:.6f}")
+    except Exception as e:
+        print(f"Quantum solve failed: {str(e)}")
+        break
+
+# Plot results
+plt.figure(figsize=(10, 5))
+plt.subplot(1, 2, 1)
+plt.plot(x, u_classic, 'o-', label="Classical")
+plt.plot(x, u_quantum, 'x--', label="Quantum")
+plt.title("Final Solution")
+plt.xlabel("Position")
+plt.ylabel("u(x)")
+plt.legend()
+
+plt.subplot(1, 2, 2)
+plt.plot(classic_times, label="Classical")
+plt.plot(quantum_times, label="Quantum")
+plt.title("Compute Time per Step")
+plt.xlabel("Time Step")
+plt.ylabel("Seconds")
+plt.yscale('log')
+plt.legend()
+
+plt.tight_layout()
+plt.savefig("results/comparison.png")
+plt.close()
+
+# Performance summary
+print("\n=== Performance Summary ===")
+print(f"Classical avg time: {np.mean(classic_times):.6f} ± {np.std(classic_times):.6f} s")
+print(f"Quantum avg time: {np.mean(quantum_times):.6f} ± {np.std(quantum_times):.6f} s")
+print(f"Final solution error: {np.linalg.norm(u_quantum - u_classic):.6f}")
