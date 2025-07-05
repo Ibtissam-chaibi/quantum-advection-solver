@@ -13,18 +13,21 @@ def ansatz(theta, wires):
             qml.RY(theta[idx], wires=i)
             idx += 1
         
-        # Entanglement layer
-        for i in range(n_qubits-1):
+        # Forward entanglement
+        for i in range(n_qubits - 1):
             qml.CNOT(wires=[wires[i], wires[i+1]])
-        if n_qubits > 1:
-            qml.CNOT(wires=[wires[-1], wires[0]])
         
         # Second set of rotations
         for i in wires:
             qml.RY(theta[idx], wires=i)
             idx += 1
+        
+        # Reverse entanglement (safe implementation)
+        if n_qubits > 1:
+            for i in range(n_qubits - 2, -1, -1):
+                qml.CNOT(wires=[wires[i], wires[i+1]])
 
-def solve_linear_system(A, b, num_layers=1, max_iter=30, reg_param=1e-5):
+def solve_linear_system(A, b, num_layers=1, max_iter=30):
     """VQLS solver for Au = b"""
     n_qubits = int(np.log2(len(b)))
     dev = qml.device("default.qubit", wires=n_qubits)
@@ -38,12 +41,11 @@ def solve_linear_system(A, b, num_layers=1, max_iter=30, reg_param=1e-5):
     def cost(theta):
         psi = circuit(theta)
         A_psi = A @ psi
-        norm_b = np.linalg.norm(b)
-        residual = A_psi - norm_b * b
         
-        # Regularization for numerical stability
-        regularization = reg_param * np.linalg.norm(psi)
-        return np.linalg.norm(residual)**2 + regularization
+        # Numerically stable cost calculation
+        residual = A_psi - b
+        cost_value = np.vdot(residual, residual).real
+        return cost_value + 1e-6 * np.vdot(psi, psi).real  # Regularization
     
     # Initialize parameters
     theta = np.random.uniform(0, 2*np.pi, num_params, requires_grad=True)
@@ -55,6 +57,15 @@ def solve_linear_system(A, b, num_layers=1, max_iter=30, reg_param=1e-5):
         if i % 5 == 0:
             print(f"Iter {i:3d}: Loss = {loss:.6f}")
     
-    # Compute solution
+    # Compute robust scaling
     psi_opt = circuit(theta)
-    return np.real(psi_opt)
+    numerator = np.vdot(b, A @ psi_opt)
+    denominator = np.vdot(psi_opt, A.conj().T @ A @ psi_opt)
+    
+    if abs(denominator) > 1e-8:
+        scale = (numerator / denominator).real
+    else:
+        scale = 1.0
+        print("Warning: Small denominator, using scale=1")
+    
+    return scale * np.real(psi_opt)
