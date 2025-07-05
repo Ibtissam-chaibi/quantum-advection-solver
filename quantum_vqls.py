@@ -8,16 +8,16 @@ def ansatz(theta, wires):
     idx = 0
     
     for _ in range(layers):
-        # Layer 1: Single-qubit rotations
+        # First set of rotations
         for i in wires:
             qml.RY(theta[idx], wires=i)
             idx += 1
         
-        # Layer 2: Entanglement
+        # Entanglement layer
         for i in range(n_qubits-1):
             qml.CNOT(wires=[wires[i], wires[i+1]])
         
-        # Layer 3: Single-qubit rotations
+        # Second set of rotations
         for i in wires:
             qml.RY(theta[idx], wires=i)
             idx += 1
@@ -26,7 +26,7 @@ def ansatz(theta, wires):
         for i in reversed(range(n_qubits-1)):
             qml.CNOT(wires=[wires[i], wires[i+1]])
 
-def solve_linear_system(A, b, num_layers=2, max_iter=50):  # Reduced iterations for speed
+def solve_linear_system(A, b, num_layers=1, max_iter=30):
     """VQLS solver for Au = b"""
     n_qubits = int(np.log2(len(b)))
     dev = qml.device("default.qubit", wires=n_qubits)
@@ -49,7 +49,7 @@ def solve_linear_system(A, b, num_layers=2, max_iter=50):  # Reduced iterations 
     # Optimization loop
     for i in range(max_iter):
         theta, loss = opt.step_and_cost(cost, theta)
-        if i % 5 == 0:  # Print less frequently
+        if i % 5 == 0:
             print(f"Iter {i:3d}: Loss = {loss:.6f}")
     
     # Compute solution
