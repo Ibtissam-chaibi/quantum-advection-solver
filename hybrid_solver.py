@@ -33,6 +33,8 @@ print("Initial condition:", np.round(u_quantum, 4))
 
 # Time-stepping
 quantum_times, classic_times = [], []
+errors = []
+
 for step in range(steps):
     print(f"\n--- Step {step+1}/{steps} ---")
     
@@ -46,45 +48,54 @@ for step in range(steps):
     # Quantum solve
     t0 = time.time()
     try:
-        b = u_quantum / np.linalg.norm(u_quantum)  # Normalize
+        # Normalize and solve
+        norm_b = np.linalg.norm(u_quantum)
+        b = u_quantum / norm_b
         u_quantum = solve_linear_system(A, b, num_layers=1, max_iter=30)
-        u_quantum *= np.linalg.norm(b)  # Rescale
+        
+        # Rescale to physical magnitude
+        u_quantum = norm_b * u_quantum
         quantum_time = time.time() - t0
         quantum_times.append(quantum_time)
         print(f"Quantum solved in {quantum_time:.4f}s")
         
         # Calculate error
         error = np.linalg.norm(u_quantum - u_classic)
+        errors.append(error)
         print(f"Error: {error:.6f}")
     except Exception as e:
         print(f"Quantum solve failed: {str(e)}")
         break
 
 # Plot results
-plt.figure(figsize=(10, 5))
+plt.figure(figsize=(12, 5))
+
+# Solution plot
 plt.subplot(1, 2, 1)
 plt.plot(x, u_classic, 'o-', label="Classical")
 plt.plot(x, u_quantum, 'x--', label="Quantum")
-plt.title("Final Solution")
+plt.title(f"Solution at t={T_final:.2f}")
 plt.xlabel("Position")
 plt.ylabel("u(x)")
 plt.legend()
+plt.grid(True)
 
+# Error plot
 plt.subplot(1, 2, 2)
-plt.plot(classic_times, label="Classical")
-plt.plot(quantum_times, label="Quantum")
-plt.title("Compute Time per Step")
+plt.plot(errors, 'r-')
+plt.title("Error Evolution")
 plt.xlabel("Time Step")
-plt.ylabel("Seconds")
+plt.ylabel("L2 Error")
+plt.grid(True)
 plt.yscale('log')
-plt.legend()
 
 plt.tight_layout()
 plt.savefig("results/comparison.png")
-plt.close()
+print("Saved results/comparison.png")
 
 # Performance summary
 print("\n=== Performance Summary ===")
 print(f"Classical avg time: {np.mean(classic_times):.6f} ± {np.std(classic_times):.6f} s")
 print(f"Quantum avg time: {np.mean(quantum_times):.6f} ± {np.std(quantum_times):.6f} s")
-print(f"Final solution error: {np.linalg.norm(u_quantum - u_classic):.6f}")
+if len(errors) > 0:
+    print(f"Final solution error: {errors[-1]:.6f}")
