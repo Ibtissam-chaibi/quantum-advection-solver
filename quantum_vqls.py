@@ -16,17 +16,15 @@ def ansatz(theta, wires):
         # Entanglement layer
         for i in range(n_qubits-1):
             qml.CNOT(wires=[wires[i], wires[i+1]])
+        if n_qubits > 1:
+            qml.CNOT(wires=[wires[-1], wires[0]])
         
         # Second set of rotations
         for i in wires:
             qml.RY(theta[idx], wires=i)
             idx += 1
-        
-        # Reverse entanglement
-        for i in reversed(range(n_qubits-1)):
-            qml.CNOT(wires=[wires[i], wires[i+1]])
 
-def solve_linear_system(A, b, num_layers=1, max_iter=30):
+def solve_linear_system(A, b, num_layers=1, max_iter=30, reg_param=1e-5):
     """VQLS solver for Au = b"""
     n_qubits = int(np.log2(len(b)))
     dev = qml.device("default.qubit", wires=n_qubits)
@@ -40,7 +38,12 @@ def solve_linear_system(A, b, num_layers=1, max_iter=30):
     def cost(theta):
         psi = circuit(theta)
         A_psi = A @ psi
-        return np.linalg.norm(A_psi - b)**2
+        norm_b = np.linalg.norm(b)
+        residual = A_psi - norm_b * b
+        
+        # Regularization for numerical stability
+        regularization = reg_param * np.linalg.norm(psi)
+        return np.linalg.norm(residual)**2 + regularization
     
     # Initialize parameters
     theta = np.random.uniform(0, 2*np.pi, num_params, requires_grad=True)
@@ -54,5 +57,4 @@ def solve_linear_system(A, b, num_layers=1, max_iter=30):
     
     # Compute solution
     psi_opt = circuit(theta)
-    scale = np.dot(b, A @ psi_opt)
-    return np.real(psi_opt) / scale
+    return np.real(psi_opt)
